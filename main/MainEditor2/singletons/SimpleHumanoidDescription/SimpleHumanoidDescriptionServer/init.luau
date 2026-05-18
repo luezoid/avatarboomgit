@@ -44,6 +44,7 @@ type Impl = {
 		asset_type: Enum.AvatarAssetType?,
 		humanoid_desc_override: HumanoidDescription?
 	) -> boolean,
+	batch_add_id: (self: SimpleHumanoidDescription, ids: { number }) -> boolean,
 	remove_id: (self: SimpleHumanoidDescription, id: number) -> boolean,
 	add_bundle_id: (self: SimpleHumanoidDescription, id: number) -> boolean,
 	remove_bundle_id: (self: SimpleHumanoidDescription, id: number) -> boolean,
@@ -92,8 +93,7 @@ local AvatarEditorService = game:GetService("AvatarEditorService")
 local HttpService = game:GetService("HttpService")
 local AssetService = game:GetService("AssetService")
 local PlayerService = game:GetService("Players")
-local SimpleHumanoidDescription = {} :: SimpleHumanoidDescription
-SimpleHumanoidDescription.__index = SimpleHumanoidDescription
+
 local id_to_accessory_description = require("@self/id_to_accessory_description")
 local id_to_accessory_mat = require("@self/id_to_accessory_mat")
 local asset_type_map = require("@self/asset_type_map")
@@ -102,6 +102,10 @@ local other_prop = require("@self/other_prop")
 local get_accessory_mesh_id = require("@self/get_accessory_mesh_id")
 local wearing_cache = require("@self/wearing_cache")
 local makeup_description_helper = require("@self/makeup_description_helper")
+
+local SimpleHumanoidDescription = {} :: SimpleHumanoidDescription
+SimpleHumanoidDescription.__index = SimpleHumanoidDescription
+local constructor = {}
 function SimpleHumanoidDescription:is_init()
 	return self.Humanoid
 end
@@ -326,6 +330,27 @@ function SimpleHumanoidDescription:add_id(id, asset_type, humanoid_desc_override
 		humanoid:ApplyDescriptionAsync(description)
 		self.id_added:Fire(id)
 	end
+	return true
+end
+
+function SimpleHumanoidDescription:batch_add_id(ids)
+	-- Adds the ids in batches. Useful in cases where GetBatchItemDetailsAsync should be used
+	if not self.Humanoid then
+		return false
+	end
+	local humanoid = self.Humanoid
+
+	local description = humanoid:GetAppliedDescription()
+	local asset_info = AvatarEditorService:GetBatchItemDetailsAsync(ids, Enum.AvatarItemType.Asset)
+	for _, asset in asset_info do
+		local to_asset_type = Enum.AvatarAssetType:FromName(asset.AssetType)
+		if not to_asset_type then
+			print(`{asset.AssetType} failed with Enum.AvatarAssetType:FromName`)
+			return false
+		end
+		self:add_id(asset.Id, to_asset_type, description)
+	end
+	humanoid:ApplyDescriptionAsync(description)
 	return true
 end
 
@@ -587,9 +612,17 @@ function SimpleHumanoidDescription:convert_humanoid_type(humanoid_type)
 	if not self.Humanoid then
 		return
 	end
-	local stored_humanoid = self.Humanoid
 	local applied_description = self.Humanoid:GetAppliedDescription()
-
+	-- @ fix for issues/issue/2451a3dd-4395-4992-83bd-f187406b63a1/event/5f6c401d-1a3f-429c-b4c2-e40a62dfd05b/details/
+	-- ?
+	local id_colours = {}
+	for _, accessories in applied_description:GetAccessories(true) do
+		id_colours[accessories.AssetId] = self:get_id_colour(accessories.AssetId)
+	end
+	-- apply the colours and stuff
+	local shirt_colour = self:get_clothing_colour("Shirt")
+	local pants_colour = self:get_clothing_colour("Pants")
+	-- @ 
 	local converted_model = PlayerService:CreateHumanoidModelFromDescriptionAsync(
 		applied_description,
 		humanoid_type == "R6" and Enum.HumanoidRigType.R6 or Enum.HumanoidRigType.R15
@@ -601,29 +634,22 @@ function SimpleHumanoidDescription:convert_humanoid_type(humanoid_type)
 			(child :: BasePart).Locked = false
 		end
 	end
-	local id_colours = {}
-	for _, accessories in applied_description:GetAccessories(true) do
-		id_colours[accessories.AssetId] = self:get_id_colour(accessories.AssetId)
-	end
-	-- apply the colours and stuff
-	local shirt_colour = self:get_clothing_colour("Shirt")
-	local pants_colour = self:get_clothing_colour("Pants")
-
-	self.Humanoid = converted_model:FindFirstChild("Humanoid") :: Humanoid
+	-- instead we use a local shs server to avoid race conditions
+	local local_shs = constructor:new()
+	local_shs.Humanoid = converted_model:FindFirstChild("Humanoid") :: Humanoid
 	if shirt_colour then
-		self:set_clothing_colour("Shirt", shirt_colour)
+		local_shs:set_clothing_colour("Shirt", shirt_colour)
 	end
 	if pants_colour then
-		self:set_clothing_colour("Pants", pants_colour)
+		local_shs:set_clothing_colour("Pants", pants_colour)
 	end
 	for id, colour in id_colours do
 		if not colour then
 			continue
 		end
-		self:set_id_colour(id, colour)
-		id_to_accessory_mat.remove(self.Humanoid, id)
+		local_shs:set_id_colour(id, colour)
+		id_to_accessory_mat.remove(local_shs.Humanoid :: Humanoid, id)
 	end
-	self.Humanoid = stored_humanoid
 	return converted_model
 end
 
@@ -799,7 +825,7 @@ function SimpleHumanoidDescription:set_id_texture(id, texture_id)
 		return
 	end
 
-	local rbx_asset_uri = type(texture_id) == "number" and `rbxassetid://{texture_id}` or texture_id
+	local rbx_asset_uri = (type(texture_id) == "number" and `rbxassetid://{texture_id}` or texture_id) :: string
 
 	if not id_material:GetAttribute("base_material_id") then
 		-- set the base id for reverting later!!!
@@ -893,7 +919,6 @@ function SimpleHumanoidDescription:get_highest_layered_clothing_count()
 	return order
 end
 
-local constructor = {}
 
 function constructor:new(): SimpleHumanoidDescription
 	local struct = {
