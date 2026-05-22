@@ -20,7 +20,6 @@ local function position_accessory_handle(accessory: Accessory, character: Instan
 			if
 				candidate:IsA("Attachment")
 				and candidate.Name == handle_attachment.Name
-				and candidate.Parent ~= handle
 				and candidate.Parent:IsA("BasePart")
 				and candidate.Parent.Parent == character
 			then
