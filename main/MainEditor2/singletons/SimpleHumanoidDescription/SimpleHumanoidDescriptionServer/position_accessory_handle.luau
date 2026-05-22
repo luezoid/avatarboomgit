@@ -16,14 +16,13 @@ local function position_accessory_handle(accessory: Accessory, character: Instan
 		if not handle_attachment:IsA("Attachment") then
 			continue
 		end
-		for _, candidate in character:GetDescendants() do
-			if
-				candidate:IsA("Attachment")
-				and candidate.Name == handle_attachment.Name
-				and candidate.Parent:IsA("BasePart")
-				and candidate.Parent.Parent == character
-			then
-				handle.CFrame = candidate.WorldCFrame * handle_attachment.CFrame:Inverse()
+		for _, body_part in character:GetChildren() do
+			if not body_part:IsA("BasePart") then
+				continue
+			end
+			local body_attachment = body_part:FindFirstChild(handle_attachment.Name)
+			if body_attachment and body_attachment:IsA("Attachment") then
+				handle.CFrame = body_attachment.WorldCFrame * handle_attachment.CFrame:Inverse()
 				return
 			end
 		end
